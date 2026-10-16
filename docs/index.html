@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Elixir Counter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: toolbar, a row of stat tiles, then cycle + chart beside deck + log. */
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #e2e5eb; --text: #151821; --muted: #6a7180;
+    --accent: #6d4fd8; --accent-soft: #ece8fb; --ok: #0f8a5f; --bad: #c8322f;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #0d0f14; --panel: #151821; --line: #252a35; --text: #e4e7ee; --muted: #858d9d;
+    --accent: #a48cf5; --accent-soft: #241f3d; --ok: #3fbf8a; --bad: #ef6b67; color-scheme: dark; } }
+  :root[data-theme="dark"] {
+    --bg: #0d0f14; --panel: #151821; --line: #252a35; --text: #e4e7ee; --muted: #858d9d;
+    --accent: #a48cf5; --accent-soft: #241f3d; --ok: #3fbf8a; --bad: #ef6b67; color-scheme: dark; }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0 auto; max-width: 1100px; background: var(--bg); color: var(--text); font: 14px/1.4 var(--sans);
+    padding-block: 14px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  button, input { font: inherit; color: inherit; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; touch-action: manipulation; }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.go { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 500; }
+  input { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .muted { color: var(--muted); }
+
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; }
+  .tools .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  #status { font-size: 12px; margin-left: auto; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-top: 12px; }
+  .stat { background: var(--panel); padding: 10px 12px; display: grid; gap: 4px; align-content: start; }
+  .big { font-size: 28px; font-weight: 500; line-height: 1.1; }
+  .chip { font: 500 11px var(--mono); padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; vertical-align: middle; }
+  .bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
+  .cell { height: 5px; background: var(--line); border-radius: 1px; overflow: hidden; }
+  .cell i { display: block; height: 100%; background: var(--accent); }
+  .bad { color: var(--bad); }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .col { display: grid; gap: 12px; align-content: start; min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .panel > .lbl { display: flex; justify-content: space-between; margin-bottom: 8px; }
+
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .c { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 44px; display: grid; gap: 2px; text-align: left; background: var(--panel); min-width: 0; }
+  .c .n { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c .m { font: 11px var(--mono); color: var(--muted); display: flex; justify-content: space-between; }
+  .c.next { border-color: var(--accent); background: var(--accent-soft); }
+  .c.wait .n { color: var(--muted); }
+  .c.empty { border-style: dashed; color: var(--muted); place-content: center; text-align: center; font-size: 12px; }
+  button.c { cursor: pointer; }
+  .warn { font-size: 12px; color: var(--bad); margin-top: 6px; }
+  .warn:empty { display: none; }
+
+  svg { display: block; width: 100%; height: 120px; }
+  svg .gl { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  svg .line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  svg .area { fill: var(--accent-soft); stroke: none; }
+  svg .play { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+  .axis { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--muted); margin-top: 2px; }
+
+  .log { max-height: 220px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 4px 0; border-top: 1px solid var(--line); }
+  td:first-child { width: 56px; color: var(--muted); } td:last-child { text-align: right; }
+
+  video { width: 100%; max-height: 50vh; background: #000; border-radius: 6px; margin-top: 8px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; width: min(520px, calc(100vw - 32px)); padding: 12px; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; max-height: 50vh; overflow: auto; margin-top: 8px; }
+  .pick button { display: flex; justify-content: space-between; gap: 6px; text-align: left; }
+  .pick .q { color: var(--muted); font: 11px var(--mono); }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .field { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+  .field input { width: 90px; }
+  .ok { color: var(--ok); }
+  tr.auto td:nth-child(2)::after { content: ' auto'; color: var(--accent); font-size: 10px; }
+  #log tr { cursor: pointer; }
+  #log tr:hover td { color: var(--bad); }
+  .c.flash { border-color: var(--accent); }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+    .col { display: contents; }
+    #pCycle { order: 1; } #pDeck { order: 2; } #pChart { order: 3; } #pLog { order: 4; }
+    .stats { grid-template-columns: repeat(6, 1fr); }
+    .stat { grid-column: span 2; } .stat.wide { grid-column: span 3; }
+    .big { font-size: 24px; }
+    .c .n { white-space: normal; font-size: 12px; line-height: 1.2; }
+  }
+
+  /* Opponent elixir, drawn like the in-game bar: a drop with the whole number,
+     ten pink segments, the current one filling up. Same look in both themes. */
+  :root { --elx-hi: #ff8af2; --elx-mid: #e03fd6; --elx-lo: #9a1da6; --elx-frame: #1b2246; --elx-empty: #2c3566; }
+  .ebar { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 8px 12px 8px 8px;
+    background: var(--elx-frame); border-radius: 10px; }
+  .drop { flex: none; width: 44px; height: 44px; border-radius: 50% 0 50% 50%; transform: rotate(-45deg);
+    background: radial-gradient(circle at 35% 30%, var(--elx-hi), var(--elx-mid) 45%, var(--elx-lo));
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); display: grid; place-items: center; }
+  .drop span { transform: rotate(45deg); color: #fff; font-size: 22px; font-weight: 600; text-shadow: 0 1px 0 var(--elx-lo); }
+  .track { flex: 1; display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; height: 22px; min-width: 0; }
+  .seg10 { background: var(--elx-empty); border-radius: 3px; overflow: hidden; }
+  .seg10 i { display: block; height: 100%;
+    background: linear-gradient(180deg, var(--elx-hi) 0%, var(--elx-mid) 45%, var(--elx-lo) 100%); }
+  .seg10.part i { opacity: .7; }
+  .ebar .max { flex: none; color: #c9cdea; font-size: 11px; }
+  #voice .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: middle; }
+  #voice[aria-pressed="true"] { border-color: var(--bad); }
+  #voice[aria-pressed="true"] .dot { background: var(--bad); }
+  @media (prefers-reduced-motion: no-preference) { #voice[aria-pressed="true"] .dot { animation: pulse 1.2s infinite; } }
+  @keyframes pulse { 50% { opacity: .3; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Elixir Counter</h1>
+    <div class="row">
+      <div class="seg"><button id="modeLive" aria-pressed="true">Live</button><button id="modeReplay" aria-pressed="false">Replay</button><button id="modeDemo" aria-pressed="false">Demo</button></div>
+      <button id="openSettings">Settings</button>
+    </div>
+  </header>
+
+  <div id="replayBox" class="panel" style="margin-top:12px" hidden>
+    <div class="row">
+      <label class="row"><span class="lbl">Video</span><input type="file" id="videoFile" accept="video/*"></label>
+      <label class="row"><span class="lbl">Detections</span><input type="file" id="detFile" accept=".json,application/json"></label>
+      <button id="markStart">Set match start</button>
+      <span class="muted num" id="detNote"></span>
+    </div>
+    <video id="video" controls playsinline></video>
+  </div>
+
+  <div id="demoBox" class="panel" style="margin-top:12px" hidden>
+    <div class="row">
+      <button class="go" id="demoPlay">Pause</button>
+      <div class="seg" id="demoSpeed"><button data-s="1" aria-pressed="false">1x</button><button data-s="4" aria-pressed="true">4x</button><button data-s="10" aria-pressed="false">10x</button></div>
+      <button id="demoNew">New match</button>
+      <span class="muted" id="demoNote">Example match: the opponent's taps are scripted.</span>
+    </div>
+  </div>
+
+  <div class="tools" id="tools">
+    <button class="go" id="start">Start</button>
+    <button id="sync">Sync clock</button>
+    <button id="nudgeBack" class="num" aria-label="Start 0.5 s earlier">−0.5s</button>
+    <button id="nudgeFwd" class="num" aria-label="Start 0.5 s later">+0.5s</button>
+    <span class="sep"></span>
+    <button id="minus1" class="num">−1</button>
+    <button id="plus1" class="num">+1</button>
+    <button id="setElx">Set</button>
+    <button id="ability">Ability</button>
+    <button id="voice" aria-pressed="false"><span class="dot"></span>Voice</button>
+    <span class="sep"></span>
+    <button id="undo">Undo</button>
+    <button id="reset">Reset</button>
+    <span id="status" class="muted"></span>
+  </div>
+
+  <div class="stats">
+    <div class="stat wide"><span class="lbl">Clock</span><span class="big num"><span id="clock">3:00</span><span class="chip" id="phase">1x</span></span></div>
+    <div class="stat wide"><span class="lbl">Opp. elixir</span><span class="big num" id="elx">5.0</span></div>
+    <div class="stat"><span class="lbl">Full in</span><span class="big num" id="fullIn">–</span></div>
+    <div class="stat"><span class="lbl">Leaked</span><span class="big num" id="leak">0.0</span></div>
+    <div class="stat"><span class="lbl">Deck seen</span><span class="big num" id="seen">0/8</span></div>
+  </div>
+  <div class="ebar" aria-hidden="true">
+    <div class="drop"><span class="num" id="elxInt">5</span></div>
+    <div class="track" id="bar"></div>
+    <span class="max num">Max: 10</span>
+  </div>
+  <div class="warn" id="negWarn"></div>
+
+  <div class="grid">
+    <div class="col">
+      <div class="panel" id="pCycle">
+        <div class="lbl"><span>In hand</span></div>
+        <div class="cards" id="hand"></div>
+        <div class="lbl" style="margin-top:12px"><span>Queue</span><span>next first</span></div>
+        <div class="cards" id="queue"></div>
+        <div class="warn" id="cycleWarn"></div>
+        <div id="truthBox" hidden>
+          <div class="lbl" style="margin:12px 0 8px; display:flex; justify-content:space-between"><span>Actual hand (hidden in a real match)</span><span id="truthMatch"></span></div>
+          <div class="cards" id="truth"></div>
+        </div>
+      </div>
+      <div class="panel" id="pChart">
+        <div class="lbl"><span>Opp. elixir</span><span class="num">0–10</span></div>
+        <svg id="chart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="Opponent elixir over time"></svg>
+        <div class="axis"><span>3:00</span><span id="axisEnd">2:00</span></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel" id="pDeck">
+        <div class="lbl"><span>Deck</span><span class="num">keys 1–8 · N</span></div>
+        <div class="cards" id="deck"></div>
+      </div>
+      <div class="panel" id="pLog">
+        <div class="lbl"><span>Log · tap a row to remove it</span><span class="num" id="logCount">0</span></div>
+        <div class="log"><table class="num" id="log"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="picker">
+    <div class="row" style="justify-content:space-between"><span class="lbl">Card played</span><button id="closePicker">Close</button></div>
+    <input id="search" placeholder="Search" autocomplete="off" style="width:100%; margin-top:8px">
+    <div class="pick" id="pickList"></div>
+  </dialog>
+
+  <dialog id="settings">
+    <div class="row" style="justify-content:space-between"><span class="lbl">Settings</span><button id="closeSettings">Done</button></div>
+    <div class="field"><span>Seconds per elixir (1x)</span><input id="cfgSec" class="num" type="number" step="0.05"></div>
+    <div class="field"><span>Starting elixir</span><input id="cfgStart" class="num" type="number" step="0.5"></div>
+    <div class="field"><span>Overtime length (s)</span><input id="cfgOT" class="num" type="number" step="10"></div>
+    <div class="lbl" style="margin-top:10px">Card cost</div>
+    <div class="row" style="margin-top:6px">
+      <input id="costName" list="cardNames" placeholder="Card" style="flex:1; min-width:0">
+      <input id="costValue" class="num" type="number" min="1" max="10" style="width:64px" placeholder="Cost">
+      <button id="saveCost">Save</button>
+    </div>
+    <datalist id="cardNames"></datalist>
+    <button id="resetSettings" style="margin-top:10px">Restore defaults</button>
+  </dialog>
+
+  <dialog id="ask">
+    <form id="askForm" method="dialog">
+      <div class="lbl" id="askTitle">Value</div>
+      <input id="askInput" class="num" autocomplete="off" style="width:100%; margin-top:8px">
+      <div class="row" style="justify-content:flex-end; margin-top:10px">
+        <button type="button" id="askCancel">Cancel</button>
+        <button type="submit" class="go">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="cards.js"></script>
+<script src="logic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
