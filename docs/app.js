@@ -29,6 +29,42 @@
   let autoDets = [];         // replay: plays found by detector/detect.py, in video time
   const video = $('video');
 
+  // Undo goes back one step of whatever you did (a tap, a removed row, a sync),
+  // not just "the last event by time", which in Replay can be a detector play.
+  let history = [];
+  function snapshot() {
+    history.push({ events: events.map((e) => ({ ...e })), off: autoDets.filter((d) => d.off).map((d) => d.id), startMs, videoStart });
+    if (history.length > 200) history.shift();
+  }
+  function undo() {
+    const h = history.pop();
+    if (!h) { status('Nothing to undo'); return; }
+    events = h.events; startMs = h.startMs; videoStart = h.videoStart;
+    for (const d of autoDets) d.off = h.off.includes(d.id);
+    if (mode === 'replay') syncAuto();
+    saveMatch(); status('Undone'); render();
+  }
+
+  // A live match is saved as you go, so a reload or a closed tab mid-match
+  // picks up where it was. The start is kept as a wall-clock time.
+  const MATCH_KEY = 'match';
+  function saveMatch() {
+    if (mode !== 'live') return;
+    if (startMs == null) { store.set(MATCH_KEY, null); return; }
+    store.set(MATCH_KEY, { startEpoch: Date.now() - (performance.now() - startMs), events });
+  }
+  function restoreMatch() {
+    const m = store.get(MATCH_KEY, null);
+    if (!m || !Array.isArray(m.events) || !isFinite(m.startEpoch)) return false;
+    const elapsed = (Date.now() - m.startEpoch) / 1000;
+    if (elapsed < 0 || elapsed > matchLength() + 120) { store.set(MATCH_KEY, null); return false; }
+    startMs = performance.now() - elapsed * 1000;
+    events = m.events.filter((e) => e && typeof e.t === 'number' && typeof e.type === 'string');
+    status('Match restored');
+    return true;
+  }
+  const matchLength = () => cfg.regularS + cfg.overtimeS;
+
   // Demo: a scripted match that plays itself on a sped-up clock.
   let demo = null, demoT = 0, demoSpeed = 4, demoPlaying = false, demoSeed = 7, lastTick = performance.now();
   function startDemo(seed) {
@@ -39,7 +75,7 @@
   function now() {
     if (mode === 'demo') return demo ? demoT : null;
     if (mode === 'replay') return videoStart == null ? null : video.currentTime - videoStart;
-    return startMs == null ? null : (performance.now() - startMs) / 1000;
+    return startMs == null ? null : Math.min((performance.now() - startMs) / 1000, matchLength());
   }
   const started = () => now() != null;
 
@@ -64,9 +100,10 @@
   function log(ev) {
     const t = now();
     if (t == null) { status('Start first'); return; }
+    snapshot();
     events.push({ ...ev, t: Math.max(0, t) });
     events.sort((a, b) => a.t - b.t);
-    render();
+    saveMatch(); render();
   }
   function playCard(name) {
     log({ type: 'play', card: name, cost: name === 'Mirror' ? null : costOf(name) });
@@ -89,7 +126,7 @@
     const evs = visibleEvents(tt);
 
     const face = L.clockFace(tt, cfg);
-    $('clock').textContent = (face.overtime ? 'OT ' : '') + face.label;
+    $('clock').textContent = face.ended && mode === 'live' ? 'End' : (face.overtime ? 'OT ' : '') + face.label;
     $('phase').textContent = face.multiplier + 'x';
     if (!armed.start) $('start').textContent = started() ? 'Restart' : 'Start';
 
@@ -129,8 +166,10 @@
     $('queue').innerHTML = c.queue.map((n, i) => n
       ? card(n, i === 0 ? 'next' : '+' + (i + 1), i === 0 ? 'next' : 'wait')
       : empty('unseen')).join('');
-    $('cycleWarn').textContent = c.conflicts.length
-      ? `${c.conflicts.map((x) => x.card).join(', ')} came back too early: missed or double tap?` : '';
+    $('cycleWarn').textContent = [
+      c.tooMany ? `${c.deck.length} different cards logged, a deck has 8: remove the wrong one from the log.` : '',
+      c.conflicts.length ? `${c.conflicts.map((x) => x.card).join(', ')} came back too early: missed or double tap?` : '',
+    ].filter(Boolean).join(' ');
 
     const inQueue = new Map(c.queue.map((n, i) => [n, i]));
     const slots = c.deck.map((n) => {
@@ -141,16 +180,17 @@
     $('deck').innerHTML = slots.join('');
 
     $('logCount').textContent = evs.length;
+    const paid = new Map(L.resolvedCosts(evs).map((c, i) => [evs[i], c]));
     $('log').innerHTML = evs.slice().reverse().map((ev) => {
       const what = ev.type === 'play' ? ev.card
         : ev.type === 'ability' ? 'Ability'
         : ev.type === 'spend' ? 'Spent'
         : ev.type === 'adjust' ? 'Adjust'
         : 'Set';
-      const val = ev.type === 'play' ? (ev.cost ?? '+1') : ev.type === 'ability' || ev.type === 'spend' ? ev.cost
+      const val = ev.type === 'play' ? (paid.get(ev) ?? '?') : ev.type === 'ability' || ev.type === 'spend' ? ev.cost
         : ev.type === 'adjust' ? (ev.delta > 0 ? '+' : '') + ev.delta : '=' + ev.value;
       const ix = events.indexOf(ev);
-      return `<tr data-ix="${ix}" class="${ev.auto ? 'auto' : ''}"><td>${L.clockFace(ev.t, cfg).label}</td><td>${esc(what)}</td><td>${val}</td></tr>`;
+      return `<tr data-ix="${ix}" class="${ev.auto ? 'auto' : ''}" tabindex="0" aria-label="Remove ${esc(what)} at ${L.clockFace(ev.t, cfg).label}"><td>${L.clockFace(ev.t, cfg).label}</td><td>${esc(what)}</td><td>${val}</td></tr>`;
     }).join('');
   }
 
@@ -180,9 +220,9 @@
   // Clearing a match takes two taps instead of a confirm() box.
   const armed = {};
   function twoTap(btn, label, fn) {
-    if (!events.length || armed[btn.id]) { armed[btn.id] = false; btn.textContent = label; fn(); return; }
-    armed[btn.id] = true; btn.textContent = 'Confirm';
-    setTimeout(() => { armed[btn.id] = false; btn.textContent = label; render(); }, 2500);
+    if (!events.length || armed[btn.id]) { clearTimeout(armed[btn.id]); armed[btn.id] = 0; btn.textContent = label; fn(); return; }
+    btn.textContent = 'Confirm?';
+    armed[btn.id] = setTimeout(() => { armed[btn.id] = 0; btn.textContent = label; render(); }, 2500);
   }
 
   // ---------- picker ----------
@@ -194,7 +234,7 @@
     setTimeout(() => $('search').focus(), 30);
   }
   function fillPicker(q) {
-    const seen = new Set(L.cycleState(events).deck);
+    const seen = new Set(L.cycleState(visibleEvents(now() ?? 0)).deck);
     const items = cardList().filter((c) => !seen.has(c.name) && c.name.toLowerCase().includes(q.toLowerCase()));
     $('pickList').innerHTML = items.map((c) =>
       `<button data-pick="${esc(c.name)}"><span>${esc(c.name)}</span><span class="q">${c.cost ?? '+1'}${c.check ? '?' : ''}</span></button>`).join('')
@@ -216,15 +256,15 @@
     if (b.dataset.new) openPicker(); else playCard(b.dataset.card);
   });
   $('start').onclick = () => twoTap($('start'), 'Restart', () => {
-    events = [];
+    snapshot(); events = [];
     if (mode === 'replay') { videoStart = video.src ? video.currentTime : null; status(video.src ? '' : 'Load a video'); syncAuto(); }
     else { startMs = performance.now(); status(''); }
-    render();
+    saveMatch(); render();
   });
   $('reset').onclick = () => twoTap($('reset'), 'Reset', () => {
-    events = []; startMs = null; videoStart = null; status(''); render();
+    snapshot(); events = []; startMs = null; videoStart = null; status(''); saveMatch(); render();
   });
-  $('undo').onclick = () => { events.pop(); render(); };
+  $('undo').onclick = undo;
   $('minus1').onclick = () => log({ type: 'adjust', delta: -1 });
   $('plus1').onclick = () => log({ type: 'adjust', delta: 1 });
   $('setElx').onclick = () => ask('Set opp. elixir', '10', (s) => {
@@ -241,13 +281,14 @@
     const rem = L.parseClock(text.replace(/ot/i, ''));
     if (rem == null) { status('Use m:ss'); return; }
     const elapsed = L.elapsedFromClock(rem, ot, cfg);
+    snapshot();
     if (mode === 'replay') { videoStart = video.currentTime - elapsed; syncAuto(); }
     else startMs = performance.now() - elapsed * 1000;
-    status('Synced'); render();
+    status('Synced'); saveMatch(); render();
   });
   const nudge = (s) => {
-    if (mode === 'replay' && videoStart != null) { videoStart += s; syncAuto(); }
-    else if (startMs != null) startMs += s * 1000;
+    if (mode === 'replay' && videoStart != null) { snapshot(); videoStart += s; syncAuto(); }
+    else if (startMs != null) { snapshot(); startMs += s * 1000; saveMatch(); }
     render();
   };
   $('nudgeBack').onclick = () => nudge(-0.5);
@@ -268,7 +309,7 @@
     for (const a of actions) {
       if (a.type === 'card') playCard(a.name);
       else if (a.type === 'spend') log({ type: 'spend', cost: a.cost });
-      else if (a.type === 'undo') { events.pop(); render(); }
+      else if (a.type === 'undo') undo();
     }
     status(`Heard "${text.trim()}"`);
   }
@@ -293,8 +334,10 @@
 
   // ---------- modes ----------
   function setMode(m) {
+    if (m === mode) return;
     if (listening) $('voice').click();
-    mode = m;
+    if (mode === 'live') store.set(MATCH_KEY, null);
+    mode = m; history = [];
     $('modeLive').setAttribute('aria-pressed', m === 'live');
     $('modeReplay').setAttribute('aria-pressed', m === 'replay');
     $('modeDemo').setAttribute('aria-pressed', m === 'demo');
@@ -307,7 +350,9 @@
     if (m === 'demo') startDemo(demoSeed);
     render();
   }
-  $('modeDemo').onclick = () => setMode('demo');
+  // Switching mode clears the match, so with plays logged it takes a second tap.
+  const leaveTo = (id, m, label) => () => { if (m === mode) return; if (mode === 'demo') { setMode(m); return; } twoTap($(id), label, () => setMode(m)); };
+  $('modeDemo').onclick = leaveTo('modeDemo', 'demo', 'Demo');
   $('demoPlay').onclick = () => {
     if (demoT >= 180) { startDemo(demoSeed); render(); return; }
     demoPlaying = !demoPlaying; $('demoPlay').textContent = demoPlaying ? 'Pause' : 'Play';
@@ -318,11 +363,12 @@
     demoSpeed = Number(b.dataset.s);
     for (const x of $('demoSpeed').children) x.setAttribute('aria-pressed', x === b);
   });
-  $('modeLive').onclick = () => setMode('live');
-  $('modeReplay').onclick = () => setMode('replay');
+  $('modeLive').onclick = leaveTo('modeLive', 'live', 'Live');
+  $('modeReplay').onclick = leaveTo('modeReplay', 'replay', 'Replay');
   $('videoFile').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
-    video.src = URL.createObjectURL(f);
+    if (video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
+    video.src = URL.createObjectURL(f); status('Pause on the frame the clock starts, then Set match start');
   };
   $('detFile').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -332,50 +378,78 @@
         autoDets = (data.plays || []).map((p, i) => ({ id: i, vt: Number(p.vt), card: String(p.card), off: false }))
           .filter((p) => isFinite(p.vt) && p.card);
         syncAuto(); render();
+        if (!autoDets.length) status('No plays in that file');
       } catch (err) { status('Not a detections file'); }
     });
   };
-  $('log').addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-ix]'); if (!row || mode === 'demo') return;
+  function removeRow(row) {
+    if (!row || mode === 'demo') return;
     const ev = events[Number(row.dataset.ix)]; if (!ev) return;
+    snapshot();
     if (ev.auto) { const d = autoDets.find((x) => x.id === ev.id); if (d) d.off = true; syncAuto(); }
     else events.splice(events.indexOf(ev), 1);
-    render();
+    status(`Removed ${ev.card || ev.type} · Undo brings it back`);
+    saveMatch(); render();
+  }
+  $('log').addEventListener('click', (e) => removeRow(e.target.closest('tr[data-ix]')));
+  $('log').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeRow(e.target.closest('tr[data-ix]')); }
   });
   $('markStart').onclick = () => {
     if (!video.src) { status('Load a video'); return; }
-    videoStart = video.currentTime; status('Start set'); syncAuto(); render();
+    snapshot(); videoStart = video.currentTime; status('Start set'); syncAuto(); render();
   };
 
   // ---------- settings ----------
   function fillSettings() {
     $('cfgSec').value = cfg.secPerElixir; $('cfgStart').value = cfg.startElixir; $('cfgOT').value = cfg.overtimeS;
     $('cardNames').innerHTML = cardList().map((c) => `<option value="${esc(c.name)}">`).join('');
+    const mine = Object.entries(costOverrides);
+    $('costList').innerHTML = mine.map(([n, c]) =>
+      `<span class="override"><span>${esc(n)}</span><span class="num">${c}</span><button data-unset="${esc(n)}" aria-label="Remove ${esc(n)} change">×</button></span>`).join('');
   }
+  $('costList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unset]'); if (!b) return;
+    delete costOverrides[b.dataset.unset]; store.set('costs', costOverrides); fillSettings(); lastSig = null; render();
+  });
   $('openSettings').onclick = () => { fillSettings(); $('settings').showModal(); };
-  $('closeSettings').onclick = () => {
-    const n = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; };
-    cfg = { ...cfg, secPerElixir: n('cfgSec', cfg.secPerElixir), startElixir: n('cfgStart', cfg.startElixir), overtimeS: n('cfgOT', cfg.overtimeS) };
+  // Numbers outside these ranges would break the maths (a 0 s regen divides by zero).
+  const clampNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isNaN(v) ? d : Math.max(lo, Math.min(hi, v)); };
+  $('settings').addEventListener('close', () => {
+    cfg = { ...cfg, secPerElixir: clampNum('cfgSec', cfg.secPerElixir, 0.5, 10), startElixir: clampNum('cfgStart', cfg.startElixir, 0, 10), overtimeS: clampNum('cfgOT', cfg.overtimeS, 0, 600) };
     store.set('cfg', { secPerElixir: cfg.secPerElixir, startElixir: cfg.startElixir, overtimeS: cfg.overtimeS });
-    $('settings').close(); lastSig = null; render();
-  };
+    lastSig = null; render();
+  });
+  $('closeSettings').onclick = () => $('settings').close();
   $('saveCost').onclick = () => {
     const name = $('costName').value.trim(); const cost = parseFloat($('costValue').value);
-    if (!name || isNaN(cost)) return;
+    if (!name || isNaN(cost) || cost < 1 || cost > 10) { $('costValue').focus(); return; }
     const known = cardList().find((c) => c.name.toLowerCase() === name.toLowerCase());
     costOverrides[known ? known.name : name] = cost; store.set('costs', costOverrides);
     $('costName').value = ''; $('costValue').value = ''; fillSettings(); render();
   };
   $('resetSettings').onclick = () => { cfg = { ...L.DEFAULTS }; costOverrides = {}; store.set('cfg', {}); store.set('costs', {}); fillSettings(); lastSig = null; render(); };
 
+  // ---------- keep the screen on during a live match ----------
+  // Phones dim and lock after ~30 s without a touch, which would hide the
+  // count mid-match. Released when the match ends, is reset, or the tab hides.
+  let wake = null;
+  async function syncWakeLock() {
+    const want = mode === 'live' && startMs != null && now() < matchLength() && document.visibilityState === 'visible';
+    if (want && !wake && 'wakeLock' in navigator) {
+      try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } catch (e) { /* not allowed here */ }
+    } else if (!want && wake) { wake.release().catch(() => {}); wake = null; }
+  }
+  document.addEventListener('visibilitychange', syncWakeLock);
+
   // ---------- keyboard ----------
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('dialog[open]') || e.target.matches('input') || (e.key === ' ' && e.target.matches('button'))) return;
     if (mode === 'demo') return;
-    const deck = L.cycleState(events).deck;
+    const deck = L.cycleState(visibleEvents(now() ?? 0)).deck;
     if (/^[1-8]$/.test(e.key)) { const n = deck[Number(e.key) - 1]; n ? playCard(n) : openPicker(); }
     else if (e.key === 'n' || e.key === 'N') openPicker();
-    else if (e.key === 'u' || e.key === 'U') $('undo').click();
+    else if (e.key === 'u' || e.key === 'U' || (e.key === 'z' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); undo(); }
     else if (e.key === ' ' && mode === 'live') { e.preventDefault(); $('start').click(); }
   });
 
@@ -388,5 +462,11 @@
     lastTick = t;
     render();
   }, 100);
-  if (location.hash === '#demo') setMode('demo'); else render();
+  setInterval(syncWakeLock, 2000);
+
+  if (location.hash === '#demo') setMode('demo');
+  else { restoreMatch(); render(); }
+
+  // Works offline once loaded (sw.js). Not on file:// or inside previews.
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

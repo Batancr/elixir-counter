@@ -157,4 +157,30 @@ test('a spend costs elixir but does not cycle', () => {
   assert.strictEqual(L.cycleState(ev).plays, 0);
 });
 
+test('voice: a number said with a card is its cost, not a second spend', () => {
+  assert.deepStrictEqual(L.parseVoice('hog four', NAMES), [{ type: 'card', name: 'Hog Rider' }]);
+  assert.deepStrictEqual(L.parseVoice('fireball 4', NAMES), [{ type: 'card', name: 'Fireball' }]);
+});
+test('voice: "to" and "for" are only numbers when nothing else was said', () => {
+  assert.deepStrictEqual(L.parseVoice('go to the log', NAMES), [{ type: 'card', name: 'The Log' }]);
+  assert.deepStrictEqual(L.parseVoice('for', NAMES), [{ type: 'spend', cost: 4 }]);
+  assert.deepStrictEqual(L.parseVoice('wait for it', NAMES), []);
+});
+test('adjust and set stay between 0 and 10', () => {
+  near(L.elixirAt([{ type: 'adjust', t: 0, delta: -9 }], 0).elixir, 0);
+  near(L.elixirAt([{ type: 'set', t: 0, value: 14 }], 0).elixir, 10);
+});
+test('Mirror shows what it really cost', () => {
+  assert.deepStrictEqual(L.resolvedCosts([play(1, 'Mirror', null), play(5, 'Hog Rider', 4), play(9, 'Mirror', null)]), [null, 4, 5]);
+});
+test('a ninth different card is flagged', () => {
+  const names = CARDS.slice(10, 19).map((c) => c.name);
+  assert.strictEqual(L.cycleState(names.map((n, i) => play(i * 5, n, 1))).tooMany, true);
+  assert.strictEqual(L.cycleState(names.slice(0, 8).map((n, i) => play(i * 5, n, 1))).tooMany, false);
+});
+test('cards confirmed from the battle logs', () => {
+  const cost = Object.fromEntries(CARDS.map((c) => [c.name, c.cost]));
+  assert.deepStrictEqual([cost['Goblin Hut'], cost['Vines'], cost['Ronin'], cost['Minion Giant'], cost['Spirit Empress']], [4, 3, 5, 4, 6]);
+});
+
 console.log(`\n${passed} passed`);

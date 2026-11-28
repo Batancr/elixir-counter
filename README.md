@@ -4,7 +4,9 @@ A personal Clash Royale helper that tracks the opponent's elixir and card cycle 
 
 ## Use it
 
-Open `docs/index.html` in a browser (phone or laptop). No build step, no server.
+Open `docs/index.html` in a browser (phone or laptop). No build step, no server. Once GitHub Pages is on for this repo (main branch, `/docs` folder) it is also at https://batancr.github.io/elixir-counter/, where it can be added to a phone's home screen and works offline.
+
+During a live match the screen stays on, and the match is saved as you go, so a reload or a closed tab picks it back up.
 
 **Live mode**
 1. Tap **Start** when the match clock starts counting.
@@ -18,9 +20,9 @@ After Start, press **Voice** and say what they play: a cost ("four") takes that 
 **Replay mode**
 Load a screen recording, pause on the frame the clock starts, press **Match starts here**, then play and tap. Elixir follows the video time, so pausing and scrubbing work.
 
-Extras: **Ability** for champion/hero abilities (costs elixir, no cycle), **−1 / +1 / Set** to correct elixir (Elixir Collector, Elixir Golem pick-ups, a leak you saw), **Undo**, and Mirror costs one more than the card before it.
+Extras: **Ability** for champion/hero abilities (costs elixir, no cycle), **−1 / +1 / Set** to correct elixir (Elixir Collector, Elixir Golem pick-ups, a leak you saw), and Mirror costs one more than the card before it. **Undo** (or U, or Ctrl/Cmd+Z) steps back one action, including bringing back a log row you removed. Switching mode or restarting with plays logged takes a second tap.
 
-Two warnings help you catch mistakes: elixir going below zero (a play logged early, a wrong cost, or the start time is off) and a card played while it should still be in their queue (a missed play or a double tap).
+Three warnings help you catch mistakes: elixir going below zero (a play logged early, a wrong cost, or the start time is off), a card played while it should still be in their queue (a missed play or a double tap), and more than 8 different cards logged.
 
 ## Card detector (recordings only)
 
@@ -47,12 +49,15 @@ Tests: `python3 detector/test_plays.py`
 - `docs/logic.js` is all the maths, pure functions. The match is an event log; elixir and cycle are replayed from it each time, so undo is just dropping the last event.
 - Elixir: start 5, +1 every 2.8 s at 1x, 2x in the last minute, overtime 2x then 3x, cap 10. Editable in Settings because balance updates move them.
 - Cycle: the card played goes to the back of a 4-card queue, so after 4 plays the queue is their last 4 plays and their hand is the other 4 cards of the deck.
-- `docs/cards.js` is the card list with costs, written from memory as of mid 2026. Cards marked `check` need confirming. Cost changes and new cards can be added in Settings (saved on your device only).
+- `docs/cards.js` is the card list with costs, checked on 28 Nov 2026 against the costs the official API reports in the CrlScout battle logs. Cost changes and new cards can be added in Settings (saved on your device only) and removed again there.
+- `docs/sw.js` caches the page for offline use. It is network first, so a new version shows on the next load when online.
 
 ## Tests
 
 ```
-node tests/logic.test.js
+node tests/logic.test.js                       # the maths
+python3 -m http.server 8131 -d docs &          # then the page, in Chromium:
+BASE=http://localhost:8131/ npx playwright test tests/browser
 ```
 
 ## Credits and terms

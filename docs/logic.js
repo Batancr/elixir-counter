@@ -75,8 +75,8 @@ function elixirAt(events, t, cfg = DEFAULTS) {
   for (const ev of events) {
     if (ev.t > t) break;
     advance(Math.max(ev.t, at));
-    if (ev.type === 'set') { value = ev.value; continue; }
-    if (ev.type === 'adjust') { value = Math.min(cfg.maxElixir, value + ev.delta); continue; }
+    if (ev.type === 'set') { value = Math.max(0, Math.min(cfg.maxElixir, ev.value)); continue; }
+    if (ev.type === 'adjust') { value = Math.max(0, Math.min(cfg.maxElixir, value + ev.delta)); continue; }
     const cost = eventCost(ev, prevPlay);
     if (ev.type === 'play') prevPlay = { ...ev, cost: cost == null ? 0 : cost };
     if (cost == null) continue;
@@ -86,6 +86,17 @@ function elixirAt(events, t, cfg = DEFAULTS) {
   }
   advance(Math.max(t, at));
   return { elixir: value, leaked, negative };
+}
+
+// What each event actually cost, in log order (Mirror resolved from the play
+// before it). null when unknown, e.g. a Mirror logged before any other play.
+function resolvedCosts(events) {
+  let prevPlay = null;
+  return events.map((ev) => {
+    const cost = eventCost(ev, prevPlay);
+    if (ev.type === 'play') prevPlay = { ...ev, cost: cost == null ? 0 : cost };
+    return cost;
+  });
 }
 
 // Seconds until the opponent reaches `target` elixir from `current`, at time t.
@@ -129,6 +140,7 @@ function cycleState(events) {
   return {
     deck,                       // cards seen so far, in the order they appeared
     deckComplete: deck.length >= DECK,
+    tooMany: deck.length > DECK,  // more than 8 different cards: one was logged by mistake
     hand,                       // cards we know are in their hand right now
     unknownInHand: Math.max(0, unknownInHand),
     queue,                      // oldest first; queue[0] is the next card into their hand
@@ -225,8 +237,10 @@ function truthAt(truth, t) {
 // ---------- voice ----------
 // Turns what the speech recogniser heard into actions. A card name logs a play
 // (so the cycle updates too); a bare number logs elixir spent with no card.
-const NUMBER_WORDS = { one: 1, won: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5,
-  six: 6, seven: 7, eight: 8, ate: 8, nine: 9, ten: 10 };
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+// Words the recogniser often writes instead of a number. They only count as a
+// number when the whole phrase is numbers, so "go to the log" stays one play.
+const SOUND_ALIKES = { won: 1, to: 2, too: 2, for: 4, fore: 4, ate: 8 };
 const ALIASES = {
   'hog': 'Hog Rider', 'log': 'The Log', 'the log': 'The Log', 'musk': 'Musketeer', 'pekka': 'P.E.K.K.A',
   'mini pekka': 'Mini P.E.K.K.A', 'mini p': 'Mini P.E.K.K.A', 'skarmy': 'Skeleton Army', 'skelly army': 'Skeleton Army',
@@ -261,15 +275,22 @@ function parseVoice(text, cardNames) {
     }
   }
   if (/ (undo|cancel|scratch that) /.test(rest)) found.push({ at: rest.search(/ (undo|cancel|scratch that) /), action: { type: 'undo' } });
-  rest.replace(/ (\d{1,2}|[a-z]+)(?= )/g, (m, w, at) => {
-    const n = /^\d+$/.test(w) ? Number(w) : NUMBER_WORDS[w];
-    if (n >= 1 && n <= 10) found.push({ at, action: { type: 'spend', cost: n } });
-    return m;
-  });
+  // A number said with a card is that card's cost ("hog four"), not a second
+  // spend, so numbers only count when no card was named.
+  const cardSaid = found.some((f) => f.action.type === 'card');
+  const words = norm(text).split(' ');
+  const allNumbers = words.every((w) => /^\d+$/.test(w) || w in NUMBER_WORDS || w in SOUND_ALIKES || w === 'and' || w === 'then');
+  if (!cardSaid) {
+    rest.replace(/ (\d{1,2}|[a-z]+)(?= )/g, (m, w, at) => {
+      const n = /^\d+$/.test(w) ? Number(w) : NUMBER_WORDS[w] ?? (allNumbers ? SOUND_ALIKES[w] : undefined);
+      if (n >= 1 && n <= 10) found.push({ at, action: { type: 'spend', cost: n } });
+      return m;
+    });
+  }
   return found.sort((a, b) => a.at - b.at).map((f) => f.action);
 }
 
 const api = { DEFAULTS, HAND, DECK, QUEUE, multiplierAt, regenBetween, elixirAt, secondsUntil,
-  cycleState, playsUntilBack, parseClock, clockFace, elapsedFromClock, eventCost, demoMatch, truthAt, parseVoice };
+  cycleState, resolvedCosts, playsUntilBack, parseClock, clockFace, elapsedFromClock, eventCost, demoMatch, truthAt, parseVoice };
 if (typeof module !== 'undefined') module.exports = api;
 else window.Logic = api;

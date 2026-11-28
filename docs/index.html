@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Elixir Counter</title>
+<meta name="description" content="Track your Clash Royale opponent's elixir and card cycle by tapping what they play.">
+<meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f14" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
@@ -49,9 +55,6 @@
   .stat { background: var(--panel); padding: 10px 12px; display: grid; gap: 4px; align-content: start; }
   .big { font-size: 28px; font-weight: 500; line-height: 1.1; }
   .chip { font: 500 11px var(--mono); padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; vertical-align: middle; }
-  .bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
-  .cell { height: 5px; background: var(--line); border-radius: 1px; overflow: hidden; }
-  .cell i { display: block; height: 100%; background: var(--accent); }
   .bad { color: var(--bad); }
 
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
@@ -94,16 +97,25 @@
   .ok { color: var(--ok); }
   tr.auto td:nth-child(2)::after { content: ' auto'; color: var(--accent); font-size: 10px; }
   #log tr { cursor: pointer; }
-  #log tr:hover td { color: var(--bad); }
+  #log tr:hover td, #log tr:focus-visible td { color: var(--bad); }
+  #log tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .overrides { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .overrides:empty { display: none; }
+  .override { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 2px 2px 8px; font-size: 12px; }
+  .override button { border: 0; padding: 2px 8px; }
+  .hint { font-size: 12px; margin: 4px 0 0; }
   .c.flash { border-color: var(--accent); }
   @media (max-width: 760px) {
     .grid { grid-template-columns: 1fr; }
     .col { display: contents; }
-    #pCycle { order: 1; } #pDeck { order: 2; } #pChart { order: 3; } #pLog { order: 4; }
+    /* The deck is what you tap mid-match, and its buttons already say hand /
+       next / +n, so on a phone it comes first. */
+    #pDeck { order: 1; } #pCycle { order: 2; } #pChart { order: 3; } #pLog { order: 4; }
     .stats { grid-template-columns: repeat(6, 1fr); }
     .stat { grid-column: span 2; } .stat.wide { grid-column: span 3; }
     .big { font-size: 24px; }
-    .c .n { white-space: normal; font-size: 12px; line-height: 1.2; }
+    .c { padding: 6px 5px; }
+    .c .n { white-space: normal; font-size: 12px; line-height: 1.2; letter-spacing: -.01em; hyphens: auto; overflow-wrap: break-word; }
   }
 
   /* Opponent elixir, drawn like the in-game bar: a drop with the whole number,
@@ -170,7 +182,7 @@
     <span class="sep"></span>
     <button id="undo">Undo</button>
     <button id="reset">Reset</button>
-    <span id="status" class="muted"></span>
+    <span id="status" class="muted" role="status" aria-live="polite"></span>
   </div>
 
   <div class="stats">
@@ -236,6 +248,8 @@
       <button id="saveCost">Save</button>
     </div>
     <datalist id="cardNames"></datalist>
+    <div class="overrides" id="costList"></div>
+    <p class="muted hint">Saved on this device only.</p>
     <button id="resetSettings" style="margin-top:10px">Restore defaults</button>
   </dialog>
 
