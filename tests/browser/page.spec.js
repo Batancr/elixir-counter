@@ -85,12 +85,22 @@ test.describe('Elixir Counter', () => {
     await page.fill('#cfgSec', '0');
     await page.keyboard.press('Escape');
     await expect(page.locator('#elx')).toHaveText('7.0');
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ct.cfg')).secPerElixir)).toBe(0.5);
+    await expect.poll(() => page.evaluate(() => (JSON.parse(localStorage.getItem('ct.cfg')) || {}).secPerElixir)).toBe(0.5);
     await page.click('#openSettings');
     await page.fill('#costName', 'Knight'); await page.fill('#costValue', '4'); await page.click('#saveCost');
     await expect(page.locator('#costList .override')).toHaveCount(1);
     await page.locator('#costList [data-unset="Knight"]').click();
     await expect(page.locator('#costList .override')).toHaveCount(0);
+  });
+
+  test('2v2 button sets the slower regen', async ({ page }) => {
+    await open(page, errors);
+    await page.click('#openSettings');
+    await page.locator('#cfgType [data-sec="3.6"]').click();
+    await expect(page.locator('#cfgSec')).toHaveValue('3.6');
+    await expect(page.locator('#cfgType [data-sec="3.6"]')).toHaveAttribute('aria-pressed', 'true');
+    await page.click('#closeSettings');   // the dialog's close event saves, a moment later
+    await expect.poll(() => page.evaluate(() => (JSON.parse(localStorage.getItem('ct.cfg')) || {}).secPerElixir)).toBe(3.6);
   });
 
   test('demo runs and the tracker matches the hidden hand', async ({ page }) => {

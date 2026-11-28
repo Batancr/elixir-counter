@@ -20,6 +20,7 @@ Brought it up to the standard of the other sites. Fixed:
 - Mirror showed "+1" in the log instead of what it actually cost.
 - Card costs checked against the official API costs in ~200 CrlScout battle-log files: Goblin Hut was 5 (it is 4); added Vines (3), Ronin (5), Minion Giant (4), Spirit Empress (6); every `check` card confirmed.
 - Phones: the deck (what you tap) now comes before hand/queue; long names no longer break mid-word.
+- Elixir rates checked against the Clash Royale wiki (Elixir, Basics of Battle): 2.8 s / 1.4 s / ~0.93 s, 2x from 2:00 elapsed, 2-minute overtime with 3x in its last minute; all already right. Added a 1v1 / 2v2 switch in Settings (2v2 is ~30% slower, 3.6 s).
 - Added: offline support and home-screen install (manifest, icon, network-first service worker), a warning for a 9th different card, keyboard removal of log rows, removable cost changes in Settings, browser tests.
 
 ## 15–16 Oct 2026: first version

@@ -403,6 +403,7 @@
   // ---------- settings ----------
   function fillSettings() {
     $('cfgSec').value = cfg.secPerElixir; $('cfgStart').value = cfg.startElixir; $('cfgOT').value = cfg.overtimeS;
+    markType();
     $('cardNames').innerHTML = cardList().map((c) => `<option value="${esc(c.name)}">`).join('');
     const mine = Object.entries(costOverrides);
     $('costList').innerHTML = mine.map(([n, c]) =>
@@ -412,6 +413,15 @@
     const b = e.target.closest('[data-unset]'); if (!b) return;
     delete costOverrides[b.dataset.unset]; store.set('costs', costOverrides); fillSettings(); lastSig = null; render();
   });
+  // 2v2 makes elixir about 30% slower (3.6 s, 1.8 s, 1.2 s). Same phases.
+  function markType() {
+    for (const b of $('cfgType').children) b.setAttribute('aria-pressed', Math.abs(Number(b.dataset.sec) - parseFloat($('cfgSec').value)) < 1e-6);
+  }
+  $('cfgType').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sec]'); if (!b) return;
+    $('cfgSec').value = b.dataset.sec; markType();
+  });
+  $('cfgSec').addEventListener('input', markType);
   $('openSettings').onclick = () => { fillSettings(); $('settings').showModal(); };
   // Numbers outside these ranges would break the maths (a 0 s regen divides by zero).
   const clampNum = (id, d, lo, hi) => { const v = parseFloat($(id).value); return isNaN(v) ? d : Math.max(lo, Math.min(hi, v)); };

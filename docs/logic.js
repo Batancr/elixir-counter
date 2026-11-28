@@ -4,13 +4,16 @@
 // match time it happened at. Elixir and cycle are worked out from that log each
 // time they are shown, so undo is just "drop the last event".
 
-// Game numbers. These are my best knowledge as of mid 2026 and can change with
-// balance updates, so they live in one place and the page lets you edit them.
-//   secPerElixir 2.8 : ClashRoyaleAi measured 2.80 s on a real recording.
-//   startElixir 5, cap 10 : common knowledge, not measured here.
-//   2x elixir in the last minute of regular time, overtime 2x then 3x in its
-//   final minute : matches ClashRoyaleAi's ladder schedule; overtime length varies
-//   by mode, so check it.
+// Game numbers for a normal 1v1 battle. They can change with balance updates,
+// so they live in one place and the page lets you edit them. Checked 28 Nov 2026
+// against the Clash Royale wiki (Elixir and Basics of Battle pages):
+//   start 5, cap 10.
+//   1 elixir every 2.8 s (ClashRoyaleAi also measured 2.80 s on a recording).
+//   2x (1.4 s) from 2:00 elapsed, i.e. the last minute of regular time and the
+//   first minute of overtime; 3x (~0.93 s) in the last minute of overtime.
+//   Overtime is 2 minutes (since Nov 2019) and only happens if crowns are tied.
+//   2v2: about 30% slower, 3.6 s at 1x (the Settings "2v2" button).
+//   Event modes (Triple Elixir, Sudden Death...) use their own schedules.
 const DEFAULTS = {
   startElixir: 5,
   maxElixir: 10,
